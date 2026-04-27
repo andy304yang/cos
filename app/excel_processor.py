@@ -2,7 +2,7 @@ import openpyxl
 import json
 import os
 from typing import Dict, Any, List
-from app.config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL
+from app.config import AI_API_KEY, AI_API_URL, AI_MODEL
 
 
 def read_excel_summary(file_path: str) -> Dict[str, Any]:
@@ -28,10 +28,9 @@ def read_excel_summary(file_path: str) -> Dict[str, Any]:
 
 
 def call_ai_modify(excel_summary: Dict, instruction: str) -> List[Dict]:
-    """调用 DeepSeek AI，分析用户指令，返回修改操作列表"""
-    if not DEEPSEEK_API_KEY:
-        # 没有 API Key 时返回错误提示
-        raise ValueError("未配置 AI API Key，请在环境变量中设置 DEEPSEEK_API_KEY")
+    """调用 MiniMax AI，分析用户指令，返回修改操作列表"""
+    if not AI_API_KEY:
+        raise ValueError("未配置 AI API Key，请在环境变量中设置 AI_API_KEY")
 
     import httpx
 
@@ -66,15 +65,15 @@ def call_ai_modify(excel_summary: Dict, instruction: str) -> List[Dict]:
 - 如果指令不明确，返回空数组 []
 """
 
-    with httpx.Client(timeout=60.0) as client:
+    with httpx.Client(timeout=120.0) as client:
         response = client.post(
-            DEEPSEEK_API_URL,
+            AI_API_URL,
             headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Authorization": f"Bearer {AI_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": DEEPSEEK_MODEL,
+                "model": AI_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
             },
