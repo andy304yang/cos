@@ -1,0 +1,60 @@
+services:
+  # Next.js 前端
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://www.mclarenai.cn}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: dream-app:latest
+    container_name: dream-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL:-http://www.mclarenai.cn}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    expose:
+      - "3000"
+    networks:
+      - web
+
+  # FastAPI 后端
+  backend:
+    build:
+      context: ./backend
+    image: dream-backend:latest
+    container_name: dream-backend
+    restart: unless-stopped
+    environment:
+      - COS_SECRET_ID=${COS_SECRET_ID}
+      - COS_SECRET_KEY=${COS_SECRET_KEY}
+      - COS_BUCKET=${COS_BUCKET:-yanghao-1303848059}
+      - COS_REGION=${COS_REGION:-ap-guangzhou}
+      - COS_BASE_URL=${COS_BASE_URL:-https://yanghao-1303848059.cos.ap-guangzhou.myqcloud.com}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - /tmp/uploads:/tmp/uploads
+      - /tmp/results:/tmp/results
+    expose:
+      - "8000"
+    networks:
+      - web
+
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: dream-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+      - backend
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge
