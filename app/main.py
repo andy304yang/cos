@@ -244,9 +244,19 @@ async def download_result(
             headers={"Content-Disposition": f'attachment; filename="{dl_name}"'},
         )
     else:
-        if not task.result_url:
-            raise HTTPException(400, "无结果文件")
-        return RedirectResponse(url=task.result_url, status_code=302)
+        if not task.result_cos_key:
+            raise HTTPException(400, "无结果文件 COS key")
+        try:
+            from app.cos_client import get_signed_download_url
+            signed_url = get_signed_download_url(task.result_cos_key, expires=3600)
+        except Exception as e:
+            err = str(e)
+            if "NoSuchKey" in err:
+                raise HTTPException(404, "结果文件不存在，可能已过期或被删除")
+            if "AccessDenied" in err:
+                raise HTTPException(502, "COS 访问被拒绝，请检查签名配置")
+            raise HTTPException(500, f"签名 URL 生成失败：{err}")
+        return RedirectResponse(url=signed_url, status_code=302)
 
 
 @app.get("/api/health")
