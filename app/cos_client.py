@@ -50,3 +50,15 @@ def delete_cos_file(cos_key: str) -> bool:
 def get_public_url(cos_key: str) -> str:
     """生成公开访问 URL"""
     return f"{COS_BASE_URL}/{cos_key}"
+
+
+def get_signed_download_url(cos_key: str, expires: int = 3600) -> str:
+    """生成 COS 临时签名下载 URL，有效期默认 1 小时"""
+    client = get_cos_client()
+    url = client.get_presigned_url(
+        Bucket=COS_BUCKET,
+        Key=cos_key,
+        Method="GET",
+        Expired=expires,
+    )
+    return url
