@@ -17,6 +17,7 @@ class Task:
         self.instruction = ""
         self.result_cos_key = ""
         self.result_url = ""
+        self.result_local_path = ""
         self.error = ""
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
