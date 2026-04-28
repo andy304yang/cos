@@ -2,7 +2,7 @@ import json
 import os
 import pandas as pd
 from typing import Dict, Any
-from app.config import AI_API_KEY, AI_API_URL, AI_MODEL
+from app.config import AI_API_KEY, AI_API_URL, AI_MODEL, AI_TIMEOUT
 
 
 def _read_file(file_path: str) -> pd.DataFrame:
@@ -50,7 +50,7 @@ df = df.iloc[:, 1:]
 df['金额'] = df['金额'].fillna(0)
 """
 
-    with httpx.Client(timeout=60.0, trust_env=False) as client:
+    with httpx.Client(timeout=float(AI_TIMEOUT), trust_env=False) as client:
         try:
             response = client.post(
                 AI_API_URL,
