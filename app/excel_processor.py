@@ -1,168 +1,125 @@
-import openpyxl
 import json
 import os
-from typing import Dict, Any, List
-from app.config import AI_API_KEY, AI_API_URL, AI_MODEL
+import pandas as pd
+from typing import Dict, Any
+from app.config import AI_API_KEY, AI_API_URL, AI_MODEL, AI_TIMEOUT
 
 
-def read_excel_summary(file_path: str) -> Dict[str, Any]:
-    """读取 Excel 内容，生成摘要供 AI 理解"""
-    wb = openpyxl.load_workbook(file_path, data_only=True)
-    summary = {"sheets": [], "total_rows": 0, "total_cols": 0}
-
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        rows = list(ws.iter_rows(values_only=True))
-        # 取前 50 行作为摘要
-        sample_rows = rows[:50]
-        summary["sheets"].append({
-            "name": sheet_name,
-            "row_count": ws.max_row,
-            "col_count": ws.max_column,
-            "headers": [str(c) if c is not None else "" for c in sample_rows[0]] if sample_rows else [],
-            "sample": [[str(c) if c is not None else "" for c in row] for row in sample_rows[:10]],
-        })
-        summary["total_rows"] += ws.max_row
-
-    return summary
+def _read_file(file_path: str) -> pd.DataFrame:
+    if file_path.lower().endswith(".csv"):
+        return pd.read_csv(file_path)
+    return pd.read_excel(file_path)
 
 
-def call_ai_modify(excel_summary: Dict, instruction: str) -> List[Dict]:
-    """调用 MiniMax AI，分析用户指令，返回修改操作列表"""
+def _build_df_info(df: pd.DataFrame) -> str:
+    lines = [
+        f"共 {len(df)} 行，{len(df.columns)} 列",
+        f"列名（按顺序）：{list(df.columns)}",
+        "前5行数据（dict格式）：",
+    ]
+    for _, row in df.head(5).iterrows():
+        lines.append("  " + str(dict(row)))
+    return "\n".join(lines)
+
+
+def _call_ai_for_code(df_info: str, instruction: str) -> str:
+    """让 AI 生成 pandas 代码来处理任意自然语言指令"""
     if not AI_API_KEY:
-        raise ValueError("未配置 AI API Key，请在环境变量中设置 AI_API_KEY")
+        raise ValueError("未配置 AI_API_KEY")
 
     import httpx
 
-    prompt = f"""你是一个 Excel 处理助手。用户有一份 Excel 文件，内容如下：
+    prompt = f"""你是一个 Excel/数据处理专家，使用 Python pandas 完成用户的数据处理需求。
 
-工作表信息：
-{json.dumps(excel_summary, ensure_ascii=False, indent=2)}
+DataFrame 信息：
+{df_info}
 
 用户指令："{instruction}"
 
-请分析用户指令，确定需要执行哪些修改操作。
+请生成 Python 代码。约束：
+1. DataFrame 已经加载为变量 `df`，直接操作它
+2. 操作结果必须赋值回 `df`（例如 `df = df.drop(...)`）
+3. 只能使用 `pd`（pandas）和 Python 内置函数，不能 import 其他库
+4. 不要读写文件，不要 print
+5. 只返回纯 Python 代码，不要任何解释和 markdown
 
-返回 JSON 格式（数组，每个操作一个对象）：
-[
-  {{
-    "action": "modify_cell | fill_blank | sort | filter | add_row | delete_row",
-    "sheet": "工作表名",
-    "cell": "A1",           // 单元格地址（action=modify_cell 时）
-    "value": "修改后的值",   // 新的值
-    "start_row": 1,          // 起始行（sort/filter 时）
-    "end_row": 10,           // 结束行
-    "column": "A",           // 列
-    "sort_order": "asc|desc", // 排序方向
-    "condition": "...",      // 筛选条件
-    "reason": "为什么这样修改"
-  }}
-]
+示例（删除第一列）：
+df = df.iloc[:, 1:]
 
-注意：
-- 只返回 JSON，不要解释
-- 确保 action 和相关字段匹配
-- 如果指令不明确，返回空数组 []
+示例（填充空值为0）：
+df['金额'] = df['金额'].fillna(0)
 """
 
-    with httpx.Client(timeout=120.0) as client:
-        response = client.post(
-            AI_API_URL,
-            headers={
-                "Authorization": f"Bearer {AI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": AI_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-            },
-        )
-        response.raise_for_status()
-        result = response.json()
-        content = result["choices"][0]["message"]["content"]
-
-        # 解析 JSON
+    with httpx.Client(timeout=float(AI_TIMEOUT), trust_env=False) as client:
         try:
-            # 尝试提取 JSON 块
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-            return json.loads(content.strip())
-        except json.JSONDecodeError:
-            raise ValueError(f"AI 返回格式错误：{content[:200]}")
+            response = client.post(
+                AI_API_URL,
+                headers={
+                    "Authorization": f"Bearer {AI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": AI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if code in (401, 403):
+                raise ValueError("AI API Key 无效或无权限，请检查 .env 中的 AI_API_KEY 配置")
+            if code == 429:
+                raise ValueError("AI API 请求频率超限，请稍等几秒后重试")
+            if code >= 500:
+                raise ValueError(f"AI 服务暂时不可用（HTTP {code}），请稍后重试")
+            raise ValueError(f"AI 请求失败（HTTP {code}）")
+        except httpx.TimeoutException:
+            raise ValueError("AI 请求超时（60s），文件可能过大，请精简内容后重试")
+        content = response.json()["choices"][0]["message"]["content"]
+
+    # 去掉 markdown 代码块
+    if "```python" in content:
+        content = content.split("```python")[1].split("```")[0]
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0]
+
+    return content.strip()
 
 
-def apply_modifications(file_path: str, operations: List[Dict], output_path: str) -> str:
-    """根据 AI 返回的操作列表，修改 Excel 并保存"""
-    wb = openpyxl.load_workbook(file_path)
-    sheet_map = {s.title: s for s in wb.worksheets}
-
-    for op in operations:
-        action = op.get("action")
-        sheet_name = op.get("sheet", wb.sheetnames[0])
-        ws = sheet_map.get(sheet_name)
-        if not ws:
-            continue
-
-        if action == "modify_cell":
-            cell = op.get("cell")
-            value = op.get("value", "")
-            if cell:
-                ws[cell] = value
-
-        elif action == "fill_blank":
-            # 填充空白单元格
-            col = op.get("column", "A")
-            start_row = op.get("start_row", 1)
-            end_row = op.get("end_row", ws.max_row)
-            fill_value = op.get("value", "0")
-            for row in range(start_row, min(end_row + 1, ws.max_row + 1)):
-                cell = ws[f"{col}{row}"]
-                if cell.value is None or str(cell.value).strip() == "":
-                    cell.value = fill_value
-
-        elif action == "sort":
-            # 简单排序（按指定列）
-            start_row = op.get("start_row", 2)
-            end_row = op.get("end_row", ws.max_row)
-            sort_col = op.get("column", "A")
-            sort_order = op.get("sort_order", "asc")
-            col_idx = openpyxl.utils.column_index_from_string(sort_col)
-
-            rows_data = []
-            for row in range(start_row, end_row + 1):
-                row_data = [ws.cell(row=row, column=c).value for c in range(1, ws.max_column + 1)]
-                rows_data.append(row_data)
-
-            reverse = sort_order == "desc"
-            rows_data.sort(key=lambda x: (x[col_idx - 1] is None, x[col_idx - 1] if x[col_idx - 1] is not None else ""), reverse=reverse)
-
-            for i, row in enumerate(range(start_row, end_row + 1)):
-                for j, val in enumerate(rows_data[i]):
-                    ws.cell(row=row, column=j + 1).value = val
-
-    wb.save(output_path)
-    return output_path
+def _execute_code(df: pd.DataFrame, code: str) -> pd.DataFrame:
+    """在受限命名空间中执行 AI 生成的 pandas 代码"""
+    safe_builtins = {
+        "len": len, "range": range, "list": list, "dict": dict, "tuple": tuple,
+        "str": str, "int": int, "float": float, "bool": bool,
+        "min": min, "max": max, "sum": sum, "abs": abs, "round": round,
+        "enumerate": enumerate, "zip": zip, "sorted": sorted,
+        "None": None, "True": True, "False": False,
+    }
+    namespace = {
+        "df": df.copy(),
+        "pd": pd,
+        "__builtins__": safe_builtins,
+    }
+    exec(code, namespace)  # noqa: S102
+    result = namespace.get("df")
+    if not isinstance(result, pd.DataFrame):
+        raise ValueError("AI 生成的代码没有将结果赋值回 df")
+    return result
 
 
 def process_excel(file_path: str, instruction: str, output_path: str) -> Dict[str, Any]:
-    """完整处理流程：读取 → AI分析 → 执行修改 → 保存"""
-    # 1. 读取 Excel 摘要
-    summary = read_excel_summary(file_path)
+    """完整流程：读文件 → AI 生成代码 → 执行 → 保存 xlsx"""
+    df = _read_file(file_path)
+    df_info = _build_df_info(df)
 
-    # 2. 调用 AI 获取修改方案
-    operations = call_ai_modify(summary, instruction)
+    code = _call_ai_for_code(df_info, instruction)
 
-    if not operations:
-        return {"success": True, "message": "未检测到需要执行的修改操作", "operations": []}
+    if not code:
+        df.to_excel(output_path, index=False, engine="openpyxl")
+        return {"success": True, "message": "AI 未生成任何操作代码", "code": ""}
 
-    # 3. 执行修改
-    apply_modifications(file_path, operations, output_path)
+    result_df = _execute_code(df, code)
+    result_df.to_excel(output_path, index=False, engine="openpyxl")
 
-    return {
-        "success": True,
-        "message": f"成功执行 {len(operations)} 项修改",
-        "operations": operations,
-    }
+    return {"success": True, "message": "处理完成", "code": code}
