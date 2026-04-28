@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 AI_API_KEY = os.getenv("AI_API_KEY", "")
-AI_API_URL = os.getenv("AI_API_URL", "https://noingfushanquan.online/v1/chat/completions")
+AI_API_URL = os.getenv("AI_API_URL", "https://noingfushanquan.online")
 AI_MODEL = os.getenv("AI_MODEL", "mini-max-01")
 
 COS_SECRET_ID = os.getenv("COS_SECRET_ID", "")
